@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { DeveloperRecord } from '../types';
-import { AlertTriangle, CheckCircle, Clock, Search, Download, ChevronLeft, ChevronRight, Filter, Users, PlayCircle, Timer, X, ArrowLeft, Bug } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, Search, Download, ChevronLeft, ChevronRight, Filter, Users, PlayCircle, Timer, X, ArrowLeft, Bug, Copy } from 'lucide-react';
 
 interface UserTableProps {
   data: DeveloperRecord[];
@@ -64,11 +65,39 @@ export const UserTable: React.FC<UserTableProps> = ({ data, initialFilters, onBa
 
   const handleExport = () => {
     if (filteredData.length === 0) return;
-    const headers = ['ID', 'Email', 'First Name', 'Last Name', 'Partner Code', 'Country', 'Progress', 'Status', 'Score', 'Duration (Hrs)', 'Risk Flag'];
-    const rows = filteredData.map(d => [d.id, d.email, d.firstName, d.lastName, d.partnerCode, d.country, `${d.percentageCompleted}%`, d.finalGrade, d.finalScore, d.durationHours?.toFixed(2) || '', d.isSuspicious ? `Suspicious: ${d.suspicionReason}` : d.dataError ? 'Data Error' : '']);
+    const headers = ['ID', 'Email', 'First Name', 'Last Name', 'Partner Code', 'Country', 'Progress', 'Status', 'CA Status', 'Score', 'Duration (Hrs)', 'Risk Flag'];
+    const rows = filteredData.map(d => [
+        d.id, 
+        d.email, 
+        d.firstName, 
+        d.lastName, 
+        d.partnerCode, 
+        d.country, 
+        `${d.percentageCompleted}%`, 
+        d.finalGrade, 
+        d.caStatus || '', // Added CA Status
+        d.finalScore, 
+        d.computed_duration?.toFixed(2) || '', 
+        d.computed_riskFlags.join(', ') || (d.dataError ? 'Data Error' : '')
+    ]);
     const csvContent = [headers.join(','), ...rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })); link.download = `export_${new Date().toISOString().slice(0,10)}.csv`; link.click();
   };
+
+  const getRiskBadgeColor = (reason: string) => {
+      const r = reason.toLowerCase();
+      if (r.includes('batch')) return 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'; // Deep Accounts
+      if (r.includes('speed') || r.includes('bot')) return 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'; // Critical
+      if (r.includes('sybil') || r.includes('wallet')) return 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20'; // Wallet
+      return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20'; // Generic
+  };
+
+  const getRiskIcon = (reason: string) => {
+      const r = reason.toLowerCase();
+      if (r.includes('batch')) return <Copy className="w-3 h-3" />;
+      if (r.includes('bot')) return <AlertTriangle className="w-3 h-3" />;
+      return <AlertTriangle className="w-3 h-3" />;
+  }
 
   return (
     <div className="space-y-6 fade-in-up">
@@ -167,13 +196,13 @@ export const UserTable: React.FC<UserTableProps> = ({ data, initialFilters, onBa
                       <span className="inline-flex items-center gap-1.5 text-[#2a00ff] bg-[#2a00ff]/10 px-2.5 py-1 rounded-full text-xs font-bold border border-[#2a00ff]/20"><Clock className="w-3 h-3" /> In Progress</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-slate-500 dark:text-slate-400 font-mono text-xs">{user.durationHours ? `${user.durationHours.toFixed(1)}h` : '-'}</td>
+                  <td className="px-6 py-4 text-slate-500 dark:text-slate-400 font-mono text-xs">{user.computed_duration ? `${user.computed_duration.toFixed(1)}h` : '-'}</td>
                   <td className="px-6 py-4">
-                    {user.isSuspicious ? (
+                    {user.computed_riskFlags && user.computed_riskFlags.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
-                            {user.suspicionReason?.split(',').map((reason, i) => (
-                                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-500/10 text-red-600 dark:text-red-400 rounded text-[10px] font-bold border border-red-500/20 whitespace-nowrap">
-                                    <AlertTriangle className="w-3 h-3" /> {reason.trim()}
+                            {user.computed_riskFlags.map((reason, i) => (
+                                <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${getRiskBadgeColor(reason)}`}>
+                                    {getRiskIcon(reason)} {reason.trim()}
                                 </span>
                             ))}
                         </div>

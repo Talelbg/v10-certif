@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 import { Users, Award, Globe, Clock, AlertTriangle, Activity, Filter, BarChart2, Mail, Flag, Calendar, Check, Sparkles } from 'lucide-react';
@@ -9,30 +10,50 @@ import { generateExecutiveSummary } from '../services/geminiService';
 interface DashboardProps {
   data: DeveloperRecord[];
   onNavigate: (view: string, params?: any) => void;
+  // Global Timeframe Props
+  timeframe: TimeframeOption;
+  setTimeframe: (t: TimeframeOption) => void;
+  startDate: string;
+  setStartDate: (d: string) => void;
+  endDate: string;
+  setEndDate: (d: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ 
+    data, 
+    onNavigate, 
+    timeframe, 
+    setTimeframe, 
+    startDate, 
+    setStartDate, 
+    endDate, 
+    setEndDate 
+}) => {
   // Metrics State
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [aiSummary, setAiSummary] = useState<string>("Waiting for data...");
   const [loadingAi, setLoadingAi] = useState(false);
 
-  // Filter State
+  // Filter State (Community is still local to Dashboard for now)
   const [activeCommunity, setActiveCommunity] = useState<string>('All');
-  const [activeTimeframe, setActiveTimeframe] = useState<TimeframeOption>('All Time');
-  const [activeStartDate, setActiveStartDate] = useState<string>('');
-  const [activeEndDate, setActiveEndDate] = useState<string>('');
-
+  
   // Pending State for "Apply" workflow
   const [pendingCommunity, setPendingCommunity] = useState<string>('All');
-  const [pendingTimeframe, setPendingTimeframe] = useState<TimeframeOption>('All Time');
-  const [pendingStartDate, setPendingStartDate] = useState<string>('');
-  const [pendingEndDate, setPendingEndDate] = useState<string>('');
+  const [pendingTimeframe, setPendingTimeframe] = useState<TimeframeOption>(timeframe);
+  const [pendingStartDate, setPendingStartDate] = useState<string>(startDate);
+  const [pendingEndDate, setPendingEndDate] = useState<string>(endDate);
+
+  // Sync pending state with props when props change (e.g. from another tab)
+  useEffect(() => {
+      setPendingTimeframe(timeframe);
+      setPendingStartDate(startDate);
+      setPendingEndDate(endDate);
+  }, [timeframe, startDate, endDate]);
 
   const hasUnappliedChanges = 
       pendingCommunity !== activeCommunity || 
-      pendingTimeframe !== activeTimeframe ||
-      (pendingTimeframe === 'Custom Range' && (pendingStartDate !== activeStartDate || pendingEndDate !== activeEndDate));
+      pendingTimeframe !== timeframe ||
+      (pendingTimeframe === 'Custom Range' && (pendingStartDate !== startDate || pendingEndDate !== endDate));
 
   // Date Calculation
   const calculatedDateRange = useMemo(() => {
@@ -42,7 +63,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
       const endOfToday = new Date();
       endOfToday.setHours(23, 59, 59, 999);
 
-      switch (activeTimeframe) {
+      switch (timeframe) {
           case 'Last 30 Days':
               start = new Date(); start.setDate(now.getDate() - 30); start.setHours(0, 0, 0, 0); end = endOfToday; break;
           case 'Last 90 Days':
@@ -50,18 +71,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
           case 'This Year':
               start = new Date(now.getFullYear(), 0, 1); start.setHours(0, 0, 0, 0); end = endOfToday; break;
           case 'Custom Range':
-              if (activeStartDate) { start = new Date(activeStartDate); start.setHours(0, 0, 0, 0); }
-              if (activeEndDate) { end = new Date(activeEndDate); end.setHours(23, 59, 59, 999); }
+              if (startDate) { start = new Date(startDate); start.setHours(0, 0, 0, 0); }
+              if (endDate) { end = new Date(endDate); end.setHours(23, 59, 59, 999); }
               break;
           default: start = null; end = null; break;
       }
       return { start, end };
-  }, [activeTimeframe, activeStartDate, activeEndDate]);
+  }, [timeframe, startDate, endDate]);
 
+  // Derive unique communities with Name and Code for the dropdown
   const communities = useMemo(() => {
-    const unique = new Set(data.map(d => d.partnerCode).filter(c => c && c !== 'UNKNOWN'));
-    return ['All', ...Array.from(unique).sort()];
+    const map = new Map<string, string>(); // code -> name
+    data.forEach(d => {
+        if (d.partnerCode && d.partnerCode !== 'UNKNOWN') {
+            const currentName = map.get(d.partnerCode);
+            // If we haven't seen this code, OR if the current stored name is just the code (placeholder) but we found a real name
+            if (!currentName || (currentName === d.partnerCode && d.partnerName && d.partnerName !== d.partnerCode)) {
+                 const label = (d.partnerName && d.partnerName !== 'UNKNOWN') 
+                    ? d.partnerName // Use just the name if clean
+                    : d.partnerCode;
+                map.set(d.partnerCode, label);
+            }
+        }
+    });
+    
+    // Sort by name
+    const sorted = Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+    return [['All', 'Global (All)'], ...sorted];
   }, [data]);
+
+  const activeCommunityLabel = useMemo(() => {
+      if (activeCommunity === 'All') return 'Global Overview';
+      const found = communities.find(c => c[0] === activeCommunity);
+      return found ? found[1] : activeCommunity;
+  }, [activeCommunity, communities]);
 
   const communityFilteredData = useMemo(() => {
     if (activeCommunity === 'All') return data;
@@ -92,19 +135,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
 
   const handleApplyFilters = () => {
       setActiveCommunity(pendingCommunity);
-      setActiveTimeframe(pendingTimeframe);
-      setActiveStartDate(pendingStartDate);
-      setActiveEndDate(pendingEndDate);
+      // Propagate changes up to Global App State
+      setTimeframe(pendingTimeframe);
+      setStartDate(pendingStartDate);
+      setEndDate(pendingEndDate);
   };
 
   const handleGenerateSummary = async () => {
       if (!metrics) return;
       setLoadingAi(true);
-      let timeContext: string = activeTimeframe;
-      if (activeTimeframe === 'Custom Range') {
-          timeContext = `${activeStartDate || 'Start'} to ${activeEndDate || 'End'}`;
+      let timeContext: string = timeframe;
+      if (timeframe === 'Custom Range') {
+          timeContext = `${startDate || 'Start'} to ${endDate || 'End'}`;
       }
-      const fullContext = `${activeCommunity} (${timeContext})`;
+      const fullContext = `${activeCommunityLabel} (${timeContext})`;
       try {
         if (!process.env.API_KEY) {
             setAiSummary("AI unavailable (Missing API Key).");
@@ -148,13 +192,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 border-b border-slate-200 dark:border-white/5 pb-6">
              <div>
                 <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-3">
-                    {activeCommunity === 'All' ? 'Global Overview' : activeCommunity}
+                    {activeCommunityLabel}
                     <div className="w-2 h-2 rounded-full bg-[#2a00ff] shadow-[0_0_10px_#2a00ff] animate-pulse"></div>
                 </h1>
                 <p className="text-slate-500 dark:text-slate-400 text-sm mt-1 font-medium">
-                    {activeTimeframe === 'All Time' 
+                    {timeframe === 'All Time' 
                         ? `Viewing all ${communityFilteredData.length.toLocaleString()} records` 
-                        : `Timeframe: ${activeTimeframe === 'Custom Range' ? `${activeStartDate} - ${activeEndDate}` : activeTimeframe}`}
+                        : `Timeframe: ${timeframe === 'Custom Range' ? `${startDate} - ${endDate}` : timeframe}`}
                 </p>
             </div>
             <button 
@@ -178,8 +222,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
                         onChange={(e) => setPendingCommunity(e.target.value)}
                         className="pl-10 pr-10 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-900 dark:text-white focus:ring-2 focus:ring-[#2a00ff] focus:border-transparent outline-none appearance-none w-full xl:w-64 cursor-pointer hover:border-slate-300 dark:hover:border-slate-500 transition-colors shadow-sm"
                     >
-                        {communities.map(c => (
-                            <option key={c} value={c}>{c === 'All' ? 'Global (All)' : c}</option>
+                        {communities.map(([code, label]) => (
+                            <option key={code} value={code}>{label}</option>
                         ))}
                     </select>
                 </div>
@@ -315,7 +359,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
           value={`${metrics.potentialFakeAccounts} (${metrics.potentialFakeAccountsPct.toFixed(1)}%)`}
           icon={<AlertTriangle className="w-5 h-5" />}
           alert={metrics.potentialFakeAccounts > 0}
-          tooltip="Includes Speed Runs (<4h), Disposable Emails, and Shared Wallets. Does NOT include Data Errors (Time Travelers)."
+          tooltip="Includes Speed Runs (<4h), Deep Accounts (Batch Patterns), and Shared Wallets."
           onClick={() => onNavigate('developers', { statusFilter: 'Flagged', communityFilter: activeCommunity })}
         />
         <StatCard
@@ -348,7 +392,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
           
           <div className="h-72 w-full">
             {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <AreaChart data={chartData}>
                     <defs>
                         <linearGradient id="colorReg" x1="0" y1="0" x2="0" y2="1">
@@ -384,7 +428,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onNavigate }) => {
             </h3>
             <div className="h-72 w-full">
                 {leaderboardData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                         <BarChart data={leaderboardData} layout="vertical" margin={{ left: 40 }}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeOpacity={0.2}/>
                             <XAxis type="number" hide />

@@ -46,12 +46,54 @@ const applyAmPmFix = (createdAt: string, completedAt: string | null): string | n
   return completed.toISOString();
 };
 
+// --- ADVANCED FRAUD: BATCH PATTERN DETECTION ---
+const detectBatchPatterns = (records: DeveloperRecord[]): Set<string> => {
+    const suspectIds = new Set<string>();
+    
+    // Pattern Maps
+    const nameRoots = new Map<string, string[]>(); // Root -> [IDs]
+    const emailRoots = new Map<string, string[]>(); // Root -> [IDs]
+
+    // Regex to strip numbers and special chars from end of string
+    // e.g. "John Doe 1" -> "johndoe", "John Doe 02" -> "johndoe"
+    const normalize = (str: string) => str.toLowerCase().replace(/[\d\s._-]+$/g, '');
+
+    records.forEach(r => {
+        const nameRoot = normalize(r.firstName + r.lastName);
+        if (nameRoot.length > 3) { // Ignore short names to avoid false positives
+            if (!nameRoots.has(nameRoot)) nameRoots.set(nameRoot, []);
+            nameRoots.get(nameRoot)?.push(r.id);
+        }
+
+        if (r.email) {
+            const emailUser = r.email.split('@')[0];
+            const emailRoot = normalize(emailUser);
+            if (emailRoot.length > 3) {
+                if (!emailRoots.has(emailRoot)) emailRoots.set(emailRoot, []);
+                emailRoots.get(emailRoot)?.push(r.id);
+            }
+        }
+    });
+
+    // Threshold: If 3 or more accounts share the same root, flag them.
+    const THRESHOLD = 3;
+
+    nameRoots.forEach((ids) => {
+        if (ids.length >= THRESHOLD) ids.forEach(id => suspectIds.add(id));
+    });
+
+    emailRoots.forEach((ids) => {
+        if (ids.length >= THRESHOLD) ids.forEach(id => suspectIds.add(id));
+    });
+
+    return suspectIds;
+};
+
 export const processIngestedData = (rawData: DeveloperRecord[]): DeveloperRecord[] => {
-  // PRD 4.2 Module B: Fraud Engine (Sybil Check)
-  // Logic: Group by Wallet Address. If count > 1 -> Tag all as "Sybil".
+  // 1. SYBIL PRE-CALCULATION
   const walletCounts = new Map<string, number>();
   rawData.forEach(r => {
-      if(r.walletAddress && r.walletAddress.length > 5) { // Basic length check
+      if(r.walletAddress && r.walletAddress.length > 5) {
           const w = r.walletAddress.trim().toLowerCase();
           if (w !== 'n/a' && w !== 'none' && w !== '') {
              walletCounts.set(w, (walletCounts.get(w) || 0) + 1);
@@ -59,63 +101,49 @@ export const processIngestedData = (rawData: DeveloperRecord[]): DeveloperRecord
       }
   });
 
-  // KNOWN DISPOSABLE DOMAINS
+  // 2. KNOWN DISPOSABLE DOMAINS
   const disposableDomains = [
       'yopmail.com', 'mailinator.com', 'temp-mail.org', 'guerrillamail.com', 
       '10minutemail.com', 'sharklasers.com', 'throwawaymail.com', 'getnada.com'
   ];
 
-  return rawData.map((record) => {
-    // 1. Sanitize & Fix Time
+  // 3. FIRST PASS: Row-level Logic
+  let processed = rawData.map((record) => {
     const correctedCompletedAt = applyAmPmFix(record.createdAt, record.completedAt);
-    
     const riskFlags: string[] = [];
     let computed_duration = 0;
     let dataError = false;
 
-    // 2. Calculate Duration
+    // Duration Logic
     if (correctedCompletedAt && record.createdAt) {
         const start = new Date(record.createdAt).getTime();
         const end = new Date(correctedCompletedAt).getTime();
         
         if (!isNaN(start) && !isNaN(end)) {
             computed_duration = (end - start) / (1000 * 60 * 60); // Hours
-            
-            if (computed_duration < 0) {
-                 dataError = true; // Still negative after fix
-            }
+            if (computed_duration < 0) dataError = true;
         }
     }
 
-    // 3. PRD Fraud Logic: Speed Run
-    // If duration < 4 hours & Grade == 'Pass' -> Tag "Speed Run"
+    // A. Speed Run (< 4h)
     if (!dataError && computed_duration > 0 && computed_duration < 4 && record.finalGrade === 'Pass') {
-        if (computed_duration < 0.5) {
-            riskFlags.push('Bot Activity');
-        } else {
-            riskFlags.push('Speed Run');
-        }
+        if (computed_duration < 0.5) riskFlags.push('Bot Activity');
+        else riskFlags.push('Speed Run');
     }
 
-    // 4. PRD Fraud Logic: Sybil
+    // B. Sybil (Shared Wallet)
     if (record.walletAddress && record.walletAddress.length > 5) {
         const w = record.walletAddress.trim().toLowerCase();
         const count = walletCounts.get(w) || 0;
-        if (count > 1) {
-            riskFlags.push(`Sybil`);
-        }
+        if (count > 1) riskFlags.push(`Sybil`);
     }
 
-    // 5. Email Forensics (Identity)
+    // C. Email Forensics
     if (record.email) {
         const emailLower = record.email.toLowerCase();
-        if (emailLower.includes('+')) {
-            riskFlags.push('Email Alias');
-        }
+        if (emailLower.includes('+')) riskFlags.push('Email Alias');
         const domain = emailLower.split('@')[1];
-        if (domain && disposableDomains.includes(domain)) {
-            riskFlags.push('Disposable Email');
-        }
+        if (domain && disposableDomains.includes(domain)) riskFlags.push('Disposable Email');
     }
 
     return {
@@ -123,12 +151,31 @@ export const processIngestedData = (rawData: DeveloperRecord[]): DeveloperRecord
         completedAt: correctedCompletedAt,
         computed_duration,
         computed_riskFlags: riskFlags,
-        // Map legacy UI field for compatibility
-        isSuspicious: riskFlags.length > 0, // Deprecated in favor of flags array but kept for UI
-        suspicionReason: riskFlags.join(', '),
         dataError,
     };
   });
+
+  // 4. SECOND PASS: Batch Pattern Detection (Deep Accounts)
+  // Detects "User 1", "User 2" patterns
+  const batchSuspects = detectBatchPatterns(processed);
+  
+  processed = processed.map(record => {
+      if (batchSuspects.has(record.id)) {
+          // Add flag if not already present
+          if (!record.computed_riskFlags.includes('Batch Pattern')) {
+              record.computed_riskFlags.push('Batch Pattern');
+          }
+      }
+      
+      // Update legacy field
+      return {
+          ...record,
+          isSuspicious: record.computed_riskFlags.length > 0,
+          suspicionReason: record.computed_riskFlags.join(', ')
+      };
+  });
+
+  return processed;
 };
 
 export const calculateDashboardMetrics = (data: DeveloperRecord[], startDate: Date | null, endDate: Date | null) => {
@@ -162,8 +209,7 @@ export const calculateDashboardMetrics = (data: DeveloperRecord[], startDate: Da
     ? (totalDuration / validCertifiedUsers.length) / 24 
     : 0;
 
-  // PRD Metric: Potential Fake Accounts
-  // "Count of users flagged by Speed Runs or Sybil" (computed_riskFlags > 0)
+  // Potential Fake: Count records with ANY risk flag
   const potentialFake = registeredInPeriod.filter(r => r.computed_riskFlags && r.computed_riskFlags.length > 0).length;
 
   const rapidCompletions = validCertifiedUsers.filter(r => 
@@ -265,30 +311,43 @@ export const generateChartData = (data: DeveloperRecord[], startDate: Date | nul
     return sortedData;
 };
 
+// Updated Leaderboard to use Partner Name for display
 export const generateLeaderboard = (data: DeveloperRecord[]) => {
-    const counts: Record<string, number> = {};
+    // Group by Code (Unique ID) but store Name for display
+    const counts: Record<string, { count: number, name: string }> = {};
+    
     data.forEach(r => {
         if (!r.partnerCode || r.partnerCode === 'UNKNOWN') return;
         if (r.finalGrade === 'Pass') {
-            counts[r.partnerCode] = (counts[r.partnerCode] || 0) + 1;
+            if (!counts[r.partnerCode]) {
+                counts[r.partnerCode] = { count: 0, name: r.partnerName || r.partnerCode };
+            }
+            
+            // Logic to update name if a better one is found (e.g. not UNKNOWN or equal to code)
+            if (r.partnerName && r.partnerName !== 'UNKNOWN' && r.partnerName !== r.partnerCode) {
+                counts[r.partnerCode].name = r.partnerName;
+            }
+            
+            counts[r.partnerCode].count++;
         }
     });
 
-    return Object.keys(counts)
-        .map(key => ({ name: key, value: counts[key] }))
+    return Object.values(counts)
+        .map(item => ({ name: item.name, value: item.count }))
         .sort((a, b) => b.value - a.value)
         .slice(0, 10);
 };
 
 export const calculateMembershipMetrics = (data: DeveloperRecord[], startDate: Date | null, endDate: Date | null): MembershipMetrics => {
+    // Filter cohort by createdAt date range
     const enrolledInPeriod = data.filter(r => isDateInRange(r.createdAt, startDate, endDate));
     const totalEnrolled = enrolledInPeriod.length;
     
-    // PRD: "Onboarded Members: Count of acceptedMembership = true"
-    const members = enrolledInPeriod.filter(r => r.acceptedMembership);
+    // Count Members within this cohort - Mapped to 'Accepted Membership' = True/Yes/1
+    const members = enrolledInPeriod.filter(r => r.acceptedMembership === true);
     const totalMembers = members.length;
     
-    // PRD: "Certified Members: Count of members who also Passed"
+    // Count Certified users who are ALSO members - Mapped to 'Final Grade' = Pass AND 'Accepted Membership' = True
     const certifiedMembers = members.filter(r => r.finalGrade === 'Pass').length;
     
     const activeCommunities = new Set(members.map(r => r.partnerCode).filter(p => p && p !== 'UNKNOWN')).size;

@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -17,7 +18,8 @@ import {
   CommunityAgreement, 
   CommunityEvent, 
   OutreachCampaign, 
-  CommunityMasterRecord 
+  CommunityMasterRecord,
+  TimeframeOption
 } from './types';
 import { MOCK_ADMIN_TEAM } from './constants';
 import { Database, ChevronDown, Layers, Sun, Moon, CheckCircle } from 'lucide-react';
@@ -28,6 +30,11 @@ function App() {
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [viewParams, setViewParams] = useState<any>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
+
+  // --- GLOBAL TIME STATE ---
+  const [globalTimeframe, setGlobalTimeframe] = useState<TimeframeOption>('All Time');
+  const [globalStartDate, setGlobalStartDate] = useState<string>('');
+  const [globalEndDate, setGlobalEndDate] = useState<string>('');
 
   // --- GLOBAL PERSISTENT STATE ---
   const [admins, setAdmins] = useState<AdminUser[]>(MOCK_ADMIN_TEAM);
@@ -92,7 +99,16 @@ function App() {
     switch (currentView) {
       case 'dashboard': return (
           <div className="space-y-6">
-            <Dashboard data={developerData} onNavigate={handleNavigate} />
+            <Dashboard 
+                data={developerData} 
+                onNavigate={handleNavigate} 
+                timeframe={globalTimeframe}
+                setTimeframe={setGlobalTimeframe}
+                startDate={globalStartDate}
+                setStartDate={setGlobalStartDate}
+                endDate={globalEndDate}
+                setEndDate={setGlobalEndDate}
+            />
             {developerData.length === 0 && (
                  <div className="mt-8 fade-in-up p-8 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50 dark:bg-[#141319]/50">
                      <h3 className="font-bold text-slate-900 dark:text-white mb-2 text-lg text-center">Initial Blockchain Sync Required</h3>
@@ -103,7 +119,18 @@ function App() {
             )}
           </div>
         );
-      case 'membership': return <MembershipDashboard data={developerData} onBack={viewParams ? () => handleSidebarNavigate('dashboard') : undefined} />;
+      case 'membership': return (
+        <MembershipDashboard 
+            data={developerData} 
+            onBack={viewParams ? () => handleSidebarNavigate('dashboard') : undefined} 
+            timeframe={globalTimeframe}
+            setTimeframe={setGlobalTimeframe}
+            startDate={globalStartDate}
+            setStartDate={setGlobalStartDate}
+            endDate={globalEndDate}
+            setEndDate={setGlobalEndDate}
+        />
+      );
       case 'developers': return (
           <div className="space-y-6">
             <CsvUploader onDataLoaded={handleDataLoaded} versions={versions} activeVersionId={activeVersionId || undefined} onVersionSelect={handleSwitchVersion} onDeleteVersion={handleDeleteVersion} />

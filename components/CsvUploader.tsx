@@ -105,11 +105,13 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                       lastName: findIndex(['last name', 'lastname']),
                       phone: findIndex(['phone number', 'phone']),
                       country: findIndex(['country']),
-                      membership: findIndex(['accepted membership', 'membership']),
+                      // Expanded keywords for membership
+                      membership: findIndex(['accepted membership', 'membership', 'is member', 'member status', 'membership status']),
                       marketing: findIndex(['accepted marketing', 'marketing']),
                       wallet: findIndex(['wallet address', 'wallet']),
+                      // Explicit mapping: Code -> partnerCode, Partner -> partnerName
                       partnerCode: findIndex(['code', 'partner code']), 
-                      partnerName: findIndex(['partner', 'community']),
+                      partnerName: findIndex(['partner', 'community', 'partner name']),
                       percentage: findIndex(['percentage completed', 'percentage']),
                       createdAt: findIndex(['created at', 'start date']),
                       completedAt: findIndex(['completed at', 'completion date']),
@@ -118,8 +120,12 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                       caStatus: findIndex(['ca status'])
                   };
 
+                  // Fallback Logic: If Code is missing but Partner Name exists, use Name as Code (and vice versa)
                   if (map.partnerCode === -1 && map.partnerName !== -1) {
                       map.partnerCode = map.partnerName;
+                  }
+                  if (map.partnerName === -1 && map.partnerCode !== -1) {
+                      map.partnerName = map.partnerCode;
                   }
 
                   if (map.email === -1) {
@@ -146,10 +152,12 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
 
                           const getVal = (idx: number) => (idx !== -1 && cols[idx] !== undefined ? cols[idx] : '');
 
-                          // PRD Spec: Parse strings like "TRUE", "Yes", "1"
+                          // ROBUST BOOLEAN PARSING (Supports French: Vrai/Oui)
                           const parseBool = (str: string) => {
+                              if (!str) return false;
                               const s = str.trim().toLowerCase();
-                              return ['true', 'yes', '1', 'y', 'on'].includes(s);
+                              // Capture variants: "vrai", "oui", "active", "member", "checked", "joined", "1", "true", "yes"
+                              return ['true', 'yes', '1', 'y', 'on', 'active', 'member', 'checked', 'joined', 'vrai', 'oui'].includes(s);
                           };
                           
                           const parseDate = (str: string) => {
@@ -176,14 +184,18 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                           const parseGrade = (str: string): 'Pass' | 'Fail' | 'Pending' => {
                               if (!str) return 'Pending';
                               const s = str.trim().toLowerCase();
-                              if (s === 'pass' || s === 'passed' || s.includes('pass')) return 'Pass';
-                              if (s === 'fail' || s === 'failed') return 'Fail';
+                              if (s === 'pass' || s === 'passed' || s.includes('pass') || s === 'réussi' || s === 'reussi' || s === 'succès') return 'Pass';
+                              if (s === 'fail' || s === 'failed' || s === 'échoué' || s === 'echoue') return 'Fail';
                               return 'Pending';
                           };
 
                           let pCode = getVal(map.partnerCode);
-                          if (!pCode && map.partnerName !== -1) pCode = getVal(map.partnerName);
+                          // Clean up if code looks like "HEDERA-FR - Paris"
                           if (pCode && pCode.includes(' - ')) pCode = pCode.split(' - ')[0];
+
+                          let pName = getVal(map.partnerName);
+                          // If Name is empty but Code exists, fallback
+                          if (!pName && pCode) pName = pCode;
 
                           parsedData.push({
                               id: `row_${i}_${Date.now()}`,
@@ -196,7 +208,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                               acceptedMarketing: parseBool(getVal(map.marketing)),
                               walletAddress: getVal(map.wallet),
                               partnerCode: pCode || 'UNKNOWN',
-                              partnerName: getVal(map.partnerName) || pCode || 'UNKNOWN',
+                              partnerName: pName || 'UNKNOWN',
                               percentageCompleted: parseIntSafe(getVal(map.percentage)),
                               createdAt: parseDate(getVal(map.createdAt)),
                               completedAt: getVal(map.completedAt) ? parseDate(getVal(map.completedAt)) : null,
@@ -303,7 +315,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({
                 ) : isProcessing ? (
                     statusMessage
                 ) : (
-                    "Upload the Master CSV (Max 100MB). Matches 'Email', 'Code', 'Wallet' and auto-corrects timestamps."
+                    "Upload the Master CSV (Max 100MB). Matches 'Email', 'Code', 'Partner', 'Wallet' and auto-corrects timestamps."
                 )}
             </p>
             </div>

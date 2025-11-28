@@ -1,6 +1,7 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { Users, Award, Filter, Calendar, Check, Crown, TrendingUp, UserCheck, ArrowLeft } from 'lucide-react';
+import { Users, Award, Filter, Calendar, Check, Crown, TrendingUp, UserCheck, ArrowLeft, Clock } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { DeveloperRecord, TimeframeOption, MembershipMetrics } from '../types';
 import { calculateMembershipMetrics, generateMembershipChartData } from '../services/dataProcessing';
@@ -8,26 +9,46 @@ import { calculateMembershipMetrics, generateMembershipChartData } from '../serv
 interface MembershipDashboardProps {
   data: DeveloperRecord[];
   onBack?: () => void;
+  // Global Timeframe
+  timeframe: TimeframeOption;
+  setTimeframe: (t: TimeframeOption) => void;
+  startDate: string;
+  setStartDate: (d: string) => void;
+  endDate: string;
+  setEndDate: (d: string) => void;
 }
 
-export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, onBack }) => {
+export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ 
+    data, 
+    onBack, 
+    timeframe, 
+    setTimeframe, 
+    startDate, 
+    setStartDate, 
+    endDate, 
+    setEndDate 
+}) => {
   const [metrics, setMetrics] = useState<MembershipMetrics | null>(null);
 
-  // Filter State (Mirrors main dashboard for consistency)
+  // Filter State
   const [activeCommunity, setActiveCommunity] = useState<string>('All');
-  const [activeTimeframe, setActiveTimeframe] = useState<TimeframeOption>('All Time');
-  const [activeStartDate, setActiveStartDate] = useState<string>('');
-  const [activeEndDate, setActiveEndDate] = useState<string>('');
-
+  
   const [pendingCommunity, setPendingCommunity] = useState<string>('All');
-  const [pendingTimeframe, setPendingTimeframe] = useState<TimeframeOption>('All Time');
-  const [pendingStartDate, setPendingStartDate] = useState<string>('');
-  const [pendingEndDate, setPendingEndDate] = useState<string>('');
+  const [pendingTimeframe, setPendingTimeframe] = useState<TimeframeOption>(timeframe);
+  const [pendingStartDate, setPendingStartDate] = useState<string>(startDate);
+  const [pendingEndDate, setPendingEndDate] = useState<string>(endDate);
+
+  // Sync props
+  useEffect(() => {
+      setPendingTimeframe(timeframe);
+      setPendingStartDate(startDate);
+      setPendingEndDate(endDate);
+  }, [timeframe, startDate, endDate]);
 
   const hasUnappliedChanges = 
       pendingCommunity !== activeCommunity || 
-      pendingTimeframe !== activeTimeframe ||
-      (pendingTimeframe === 'Custom Range' && (pendingStartDate !== activeStartDate || pendingEndDate !== activeEndDate));
+      pendingTimeframe !== timeframe ||
+      (pendingTimeframe === 'Custom Range' && (pendingStartDate !== startDate || pendingEndDate !== endDate));
 
   // Calculate Date Objects
   const calculatedDateRange = useMemo(() => {
@@ -37,7 +58,7 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
       let start: Date | null = null;
       let end: Date | null = null;
 
-      switch (activeTimeframe) {
+      switch (timeframe) {
           case 'Last 30 Days':
               start = new Date(); start.setDate(now.getDate() - 30); start.setHours(0,0,0,0);
               end = endOfToday;
@@ -51,13 +72,13 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
               end = endOfToday;
               break;
           case 'Custom Range':
-              if (activeStartDate) { start = new Date(activeStartDate); start.setHours(0,0,0,0); }
-              if (activeEndDate) { end = new Date(activeEndDate); end.setHours(23,59,59,999); }
+              if (startDate) { start = new Date(startDate); start.setHours(0,0,0,0); }
+              if (endDate) { end = new Date(endDate); end.setHours(23,59,59,999); }
               break;
           default: break;
       }
       return { start, end };
-  }, [activeTimeframe, activeStartDate, activeEndDate]);
+  }, [timeframe, startDate, endDate]);
 
   const communities = useMemo(() => {
     const unique = new Set(data.map(d => d.partnerCode).filter(c => c && c !== 'UNKNOWN'));
@@ -69,6 +90,12 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
     if (activeCommunity === 'All') return data;
     return data.filter(d => d.partnerCode === activeCommunity);
   }, [data, activeCommunity]);
+
+  // Specific Stat: Members before Oct 1st
+  const preOctMemberCount = useMemo(() => {
+      const cutoffDate = new Date('2024-10-01T00:00:00'); 
+      return filteredData.filter(d => d.acceptedMembership === true && new Date(d.createdAt) < cutoffDate).length;
+  }, [filteredData]);
 
   // Calculate Metrics & Chart Data
   useEffect(() => {
@@ -90,13 +117,13 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
       ];
   }, [metrics]);
 
-  const COLORS = ['#8b5cf6', '#334155']; // Purple for members, Slate for non-members
+  const COLORS = ['#8b5cf6', '#334155']; 
 
   const handleApplyFilters = () => {
       setActiveCommunity(pendingCommunity);
-      setActiveTimeframe(pendingTimeframe);
-      setActiveStartDate(pendingStartDate);
-      setActiveEndDate(pendingEndDate);
+      setTimeframe(pendingTimeframe);
+      setStartDate(pendingStartDate);
+      setEndDate(pendingEndDate);
   };
 
   if (!metrics) return <div className="p-6 text-slate-500 dark:text-slate-400">Loading Membership Data...</div>;
@@ -185,7 +212,7 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
         </div>
 
         {/* METRICS GRID */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
             <StatCard 
                 title="Total Enrolled (Course)"
                 value={metrics.totalEnrolled.toLocaleString()}
@@ -196,6 +223,12 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
                 value={metrics.totalMembers.toLocaleString()}
                 icon={<Crown className="w-5 h-5" />}
                 alert={metrics.membershipRate < 50} // Alert if conversion < 50%
+            />
+            <StatCard 
+                title="Early Members (Pre-Oct 1)"
+                value={preOctMemberCount.toLocaleString()}
+                icon={<Clock className="w-5 h-5" />}
+                tooltip="Users who registered before Oct 1, 2024 and joined the Membership Program."
             />
             <StatCard 
                 title="Membership Conversion"
@@ -221,7 +254,7 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
                 </h3>
                 <div className="h-80 w-full">
                     {chartData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <AreaChart data={chartData}>
                                 <defs>
                                     <linearGradient id="colorMembers" x1="0" y1="0" x2="0" y2="1">
@@ -249,4 +282,45 @@ export const MembershipDashboard: React.FC<MembershipDashboardProps> = ({ data, 
             {/* Funnel / Pie Chart */}
             <div className="glass-card p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
                 <h3 className="font-bold text-slate-800 dark:text-white mb-2">Program Composition</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Ratio of Total Enrolled vs. Accepted Members</p
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-6">Ratio of Total Enrolled vs. Accepted Members</p>
+                <div className="h-64 w-full relative">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                        <PieChart>
+                            <Pie
+                                data={funnelData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={60}
+                                outerRadius={80}
+                                fill="#8884d8"
+                                paddingAngle={5}
+                                dataKey="value"
+                            >
+                                {funnelData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip 
+                                contentStyle={{ backgroundColor: '#141319', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}
+                            />
+                        </PieChart>
+                    </ResponsiveContainer>
+                    {/* Center Stat */}
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
+                        <div className="text-2xl font-bold text-slate-900 dark:text-white">{metrics.membershipRate.toFixed(0)}%</div>
+                        <div className="text-[10px] text-slate-500 uppercase font-bold">Conversion</div>
+                    </div>
+                </div>
+                <div className="flex justify-center gap-4 mt-4">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <div className="w-3 h-3 bg-[#8b5cf6] rounded-full"></div> Members
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <div className="w-3 h-3 bg-[#334155] rounded-full"></div> Non-Members
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+  );
+};
